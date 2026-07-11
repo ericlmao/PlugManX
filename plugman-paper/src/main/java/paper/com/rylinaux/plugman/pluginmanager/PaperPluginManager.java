@@ -28,7 +28,6 @@ package paper.com.rylinaux.plugman.pluginmanager;
 
 import bukkit.com.rylinaux.plugman.PlugManBukkit;
 import bukkit.com.rylinaux.plugman.plugin.BukkitPlugin;
-import bukkit.com.rylinaux.plugman.pluginmanager.BasePluginManager;
 import bukkit.com.rylinaux.plugman.pluginmanager.BukkitPluginManager;
 import core.com.rylinaux.plugman.PluginResult;
 import core.com.rylinaux.plugman.plugins.Plugin;
@@ -37,14 +36,17 @@ import core.com.rylinaux.plugman.util.reflection.FieldAccessor;
 import core.com.rylinaux.plugman.util.reflection.MethodAccessor;
 import core.com.rylinaux.plugman.util.tuples.Tuple;
 import io.papermc.paper.plugin.configuration.PluginMeta;
-import lombok.experimental.Delegate;
 import org.bukkit.command.Command;
 import org.yaml.snakeyaml.error.YAMLException;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.JarFile;
@@ -57,6 +59,10 @@ import java.util.logging.Level;
  */
 public class PaperPluginManager extends BukkitPluginManager {
 
+    private final LinkedHashSet<String> disabledPlugins = new LinkedHashSet<>();
+    private final Map<String, Integer> pluginLoadPositions = new HashMap<>();
+    private final List<String> disabledPluginEnableOrder = new ArrayList<>();
+
     public PaperPluginManager() {
         try {
             var pluginClassLoader = ClassAccessor.getClass("org.bukkit.plugin.java.PluginClassLoader");
@@ -66,6 +72,8 @@ public class PaperPluginManager extends BukkitPluginManager {
         } catch (ClassNotFoundException | NoSuchFieldException exception) {
             throw new RuntimeException(exception);
         }
+
+        PaperCommandRegistrationTracker.captureBaseline();
     }
 
     public boolean isPaperPlugin(File file) {
@@ -133,6 +141,130 @@ public class PaperPluginManager extends BukkitPluginManager {
         return ClassAccessor.classExists("io.papermc.paper.threadedregions.RegionizedServer");
     }
 
+    @Override
+    public boolean supportsDependencyAwareBulkReload() {
+        return true;
+    }
+
+    /**
+     * Paper closes and unregisters configured plugin class loaders when disabling them. Treat an
+     * enable as a fresh load so the plugin receives a usable class loader and lifecycle handlers.
+     */
+    @Override
+    public PluginResult enable(Plugin plugin) {
+        if (plugin == null) return new PluginResult(false, "error.invalid-plugin");
+        if (plugin.isEnabled()) return new PluginResult(false, "enable.already-enabled");
+
+        var pluginName = plugin.getName();
+        var trackedAsUnloaded = getDisabledPluginName(pluginName) != null;
+
+        if (!trackedAsUnloaded) {
+            var unloadResult = unload(plugin);
+            if (!unloadResult.success()) return unloadResult;
+        }
+
+        var loadResult = load(pluginName);
+        if (!loadResult.success()) return loadResult;
+        return new PluginResult(true, "enable.enabled");
+    }
+
+    @Override
+    public PluginResult enable(String name) {
+        var target = getPluginByName(name);
+        if (target != null) return enable(target);
+
+        var disabledPluginName = getDisabledPluginName(name);
+        if (disabledPluginName == null) return new PluginResult(false, "error.invalid-plugin");
+        if (isIgnored(disabledPluginName)) return new PluginResult(false, "error.ignored");
+
+        var loadResult = load(disabledPluginName);
+        if (!loadResult.success()) return loadResult;
+        return new PluginResult(true, "enable.enabled");
+    }
+
+    /**
+     * A safe disable on Paper is a full unload. The name is retained so enable/restart can perform
+     * a clean load rather than trying to reuse Paper's closed class loader.
+     */
+    @Override
+    public PluginResult disable(Plugin plugin) {
+        if (plugin == null) return new PluginResult(false, "plugin.null");
+        if (!plugin.isEnabled()) return new PluginResult(false, "plugin.already-disabled");
+        var pluginName = plugin.getName();
+        captureDisabledPluginEnableOrder(false);
+        var unloadResult = unload(plugin);
+        if (!unloadResult.success()) return unloadResult;
+
+        disabledPlugins.add(pluginName);
+        return new PluginResult(true, "plugin.disabled");
+    }
+
+    @Override
+    public PluginResult disableAll() {
+        captureDisabledPluginEnableOrder(true);
+        var pluginLoadOrder = getPlugins().stream()
+                .filter(plugin -> !isIgnored(plugin))
+                .map(Plugin::getName)
+                .toList();
+        var result = super.disableAll();
+
+        // disableAll tears down in reverse order; retain names in forward load order.
+        var orderedDisabledPlugins = new LinkedHashSet<String>();
+        pluginLoadOrder.stream()
+                .filter(pluginName -> getDisabledPluginName(pluginName) != null)
+                .forEach(orderedDisabledPlugins::add);
+        orderedDisabledPlugins.addAll(disabledPlugins);
+        disabledPlugins.clear();
+        disabledPlugins.addAll(orderedDisabledPlugins);
+        return result;
+    }
+
+    @Override
+    public PluginResult enableAll() {
+        var enableOrder = new ArrayList<>(disabledPluginEnableOrder);
+        getPlugins().stream()
+                .filter(plugin -> !plugin.isEnabled() && !isIgnored(plugin))
+                .map(Plugin::getName)
+                .filter(pluginName -> enableOrder.stream().noneMatch(pluginName::equalsIgnoreCase))
+                .forEach(enableOrder::add);
+        disabledPlugins.stream()
+                .filter(pluginName -> enableOrder.stream().noneMatch(pluginName::equalsIgnoreCase))
+                .forEach(enableOrder::add);
+
+        var allSuccessful = true;
+        for (var pluginName : enableOrder) {
+            if (isIgnored(pluginName)) continue;
+
+            var plugin = getPluginByName(pluginName);
+            if (plugin != null && plugin.isEnabled()) continue;
+
+            var result = plugin == null ? enable(pluginName) : enable(plugin);
+            if (!result.success()) allSuccessful = false;
+        }
+
+        if (allSuccessful) disabledPluginEnableOrder.clear();
+        return new PluginResult(allSuccessful, "plugins.enabled-all");
+    }
+
+    private void captureDisabledPluginEnableOrder(boolean reset) {
+        if (reset) disabledPluginEnableOrder.clear();
+        if (!disabledPluginEnableOrder.isEmpty()) return;
+
+        getPlugins().stream()
+                .filter(plugin -> !isIgnored(plugin))
+                .map(Plugin::getName)
+                .forEach(disabledPluginEnableOrder::add);
+    }
+
+    @Override
+    public List<String> getDisabledPluginNames(boolean fullName) {
+        var disabledPluginNames = new ArrayList<>(super.getDisabledPluginNames(fullName));
+        disabledPlugins.stream()
+                .filter(pluginName -> disabledPluginNames.stream().noneMatch(pluginName::equalsIgnoreCase))
+                .forEach(disabledPluginNames::add);
+        return disabledPluginNames;
+    }
+
     /**
      * Loads and enables a plugin.
      *
@@ -149,16 +281,34 @@ public class PaperPluginManager extends BukkitPluginManager {
 
         PlugManBukkit.getInstance().getLogger().info("Attempting to load " + pluginFile.getPath());
 
-        var target = loadPluginWithPaper(pluginFile);
-        if (target == null) {
+        var paperPlugin = isPaperPlugin(pluginFile);
+        var target = paperPlugin ? loadPaperPlugin(pluginFile) : loadPluginWithPaper(pluginFile);
+        if (target == null && !paperPlugin) {
             target = loadAndEnablePlugin(pluginFile, true);
-            if (target == null) return new PluginResult(false, "load.invalid-plugin");
         }
+        if (target == null) return new PluginResult(false, "load.invalid-plugin");
 
+        var loadedPluginName = target.getName();
+        restorePluginLoadPosition(target);
         scheduleCommandLoading();
-        PlugManBukkit.getInstance().getFilePluginMap().put(pluginFile.getName(), target.getName());
+        PlugManBukkit.getInstance().getFilePluginMap().put(pluginFile.getName(), loadedPluginName);
+        disabledPlugins.removeIf(pluginName -> pluginName.equalsIgnoreCase(loadedPluginName));
+        if (disabledPlugins.isEmpty() && getPlugins().stream()
+                .noneMatch(plugin -> !plugin.isEnabled() && !isIgnored(plugin)))
+            disabledPluginEnableOrder.clear();
 
         return new PluginResult(true, "load.loaded");
+    }
+
+    private String getDisabledPluginName(String pluginName) {
+        return disabledPlugins.stream()
+                .filter(disabledPlugin -> disabledPlugin.equalsIgnoreCase(pluginName))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static String normalizePluginName(String pluginName) {
+        return pluginName.toLowerCase(Locale.ROOT);
     }
 
 
@@ -168,9 +318,17 @@ public class PaperPluginManager extends BukkitPluginManager {
 
         if (!pluginFile.isFile()) return new PluginResult(false, "load.cannot-find");
 
-        if (isPaperPlugin(pluginFile)) return new PluginResult(false, "error.paper-plugin");
-
         return new PluginResult(true, "validation.success");
+    }
+
+    private Plugin loadPaperPlugin(File pluginFile) {
+        try {
+            return new PaperRuntimePluginLoader().load(pluginFile);
+        } catch (Throwable exception) {
+            PlugManBukkit.getInstance().getLogger().log(Level.SEVERE,
+                    "Failed to load Paper plugin: " + pluginFile.getName(), exception);
+            return null;
+        }
     }
 
     private Plugin loadPluginWithPaper(File pluginFile) {
@@ -211,6 +369,7 @@ public class PaperPluginManager extends BukkitPluginManager {
      */
     @Override
     public synchronized PluginResult unload(Plugin plugin) {
+        rememberPluginLoadPosition(plugin);
         var out = unloadWithPaper(plugin);
         if (!out.second().success()) return out.second();
 
@@ -219,6 +378,43 @@ public class PaperPluginManager extends BukkitPluginManager {
         System.gc();
 
         return new PluginResult(true, "unload.unloaded");
+    }
+
+    protected void rememberPluginLoadPosition(Plugin plugin) {
+        try {
+            var plugins = getPaperPluginList();
+            var position = plugins.indexOf(plugin.<org.bukkit.plugin.Plugin>getHandle());
+            if (position >= 0) pluginLoadPositions.put(normalizePluginName(plugin.getName()), position);
+        } catch (Exception exception) {
+            PlugManBukkit.getInstance().getLogger().log(Level.WARNING,
+                    "Failed to remember load position for plugin: " + plugin.getName(), exception);
+        }
+    }
+
+    private void restorePluginLoadPosition(Plugin plugin) {
+        var position = pluginLoadPositions.remove(normalizePluginName(plugin.getName()));
+        if (position == null) return;
+
+        try {
+            var plugins = getPaperPluginList();
+            var pluginHandle = plugin.<org.bukkit.plugin.Plugin>getHandle();
+            if (!plugins.remove(pluginHandle)) return;
+            plugins.add(Math.min(position, plugins.size()), pluginHandle);
+        } catch (Exception exception) {
+            PlugManBukkit.getInstance().getLogger().log(Level.WARNING,
+                    "Failed to restore load position for plugin: " + plugin.getName(), exception);
+        }
+    }
+
+    private List<org.bukkit.plugin.Plugin> getPaperPluginList() throws Exception {
+        var paperPluginManagerClass = ClassAccessor.getClass("io.papermc.paper.plugin.manager.PaperPluginManagerImpl");
+        if (paperPluginManagerClass == null)
+            throw new ClassNotFoundException("PaperPluginManagerImpl not found");
+
+        var paperPluginManager = MethodAccessor.invoke(paperPluginManagerClass, "getInstance", null);
+        var instanceManager = FieldAccessor.getValue(
+                paperPluginManager.getClass(), "instanceManager", paperPluginManager);
+        return FieldAccessor.getValue(instanceManager.getClass(), "plugins", instanceManager);
     }
 
     public Tuple<CommonUnloadData, PluginResult> unloadWithPaper(Plugin plugin) {
@@ -241,19 +437,29 @@ public class PaperPluginManager extends BukkitPluginManager {
 
     @Override
     protected void cleanupCommands(Plugin plugin, CommonUnloadData data) {
-        if (data.commandMap() == null) return;
+        if (data.commandMap() != null) {
+            var modifiedKnownCommands = data.commands();
+            var pluginCommands = getCommandsFromPlugin(plugin);
 
-        var modifiedKnownCommands = data.commands();
-        var pluginCommands = getCommandsFromPlugin(plugin);
+            pluginCommands.forEach(entry -> {
+                var command = entry.getValue().<Command>getHandle();
 
-        pluginCommands.forEach(entry -> {
-            var command = entry.getValue().<Command>getHandle();
+                command.unregister(data.commandMap());
+                modifiedKnownCommands.remove(entry.getKey());
+            });
+        }
 
-            command.unregister(data.commandMap());
-            modifiedKnownCommands.remove(entry.getKey());
-        });
-
+        cleanupLifecycleCommands(plugin);
         syncCommands();
+    }
+
+    private void cleanupLifecycleCommands(Plugin plugin) {
+        try {
+            PaperCommandRegistrationTracker.removeAndRestore(plugin.getName());
+        } catch (Exception exception) {
+            PlugManBukkit.getInstance().getLogger().log(Level.SEVERE,
+                    "Failed to clean up lifecycle commands for plugin: " + plugin.getName(), exception);
+        }
     }
 
     private void cleanupPaperPluginManager(Plugin plugin) {
@@ -269,10 +475,11 @@ public class PaperPluginManager extends BukkitPluginManager {
 
             MethodAccessor.invoke(instanceManager.getClass(), "disablePlugin", instanceManager, new Class<?>[]{org.bukkit.plugin.Plugin.class}, plugin);
 
-            lookupNames.remove(plugin.getName().toLowerCase());
+            var pluginHandle = plugin.<org.bukkit.plugin.Plugin>getHandle();
+            lookupNames.entrySet().removeIf(entry -> entry.getValue() == pluginHandle);
 
             var pluginList = FieldAccessor.<List<org.bukkit.plugin.Plugin>>getValue(instanceManager.getClass(), "plugins", instanceManager);
-            pluginList.remove(plugin.<org.bukkit.plugin.Plugin>getHandle());
+            pluginList.remove(pluginHandle);
         } catch (Exception ignore) {
             // Paper most likely not loaded
         }

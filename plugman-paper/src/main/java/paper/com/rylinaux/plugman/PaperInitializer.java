@@ -71,7 +71,8 @@ public class PaperInitializer {
 
         plugin.getLogger().warning("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         plugin.getLogger().warning("It seems like you're running on paper.");
-        plugin.getLogger().warning("PlugManX cannot interact with paper-plugins, yet.");
+        plugin.getLogger().warning("Runtime loading and unloading of Paper plugins is experimental.");
+        plugin.getLogger().warning("Plugins that require startup-only bootstrap operations may still require a server restart.");
         plugin.getLogger().warning("Also, if you encounter any issues, please join my discord: https://discord.gg/GxEFhVY6ff");
         plugin.getLogger().warning("Or create an issue on GitHub: https://github.com/Test-Account666/PlugMan");
         plugin.getLogger().warning("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");

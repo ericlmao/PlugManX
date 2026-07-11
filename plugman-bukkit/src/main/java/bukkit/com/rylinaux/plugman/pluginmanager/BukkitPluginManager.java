@@ -94,6 +94,7 @@ public class BukkitPluginManager extends BasePluginManager {
         if (plugin.isEnabled()) return new PluginResult(false, "enable.already-enabled");
         var bukkitPlugin = plugin.<org.bukkit.plugin.Plugin>getHandle();
         Bukkit.getPluginManager().enablePlugin(bukkitPlugin);
+        if (!bukkitPlugin.isEnabled()) return new PluginResult(false, "enable.failed");
         return new PluginResult(true, "enable.enabled");
     }
 
@@ -103,7 +104,7 @@ public class BukkitPluginManager extends BasePluginManager {
     @Override
     public PluginResult enableAll() {
         var results = Arrays.stream(Bukkit.getPluginManager().getPlugins())
-                .filter(bukkitPlugin -> !isIgnored(bukkitPlugin.getName()) && !isPaperPlugin(new BukkitPlugin(bukkitPlugin)))
+                .filter(bukkitPlugin -> !isIgnored(bukkitPlugin.getName()))
                 .map(bukkitPlugin -> enable(new BukkitPlugin(bukkitPlugin)))
                 .toList();
 
@@ -131,8 +132,10 @@ public class BukkitPluginManager extends BasePluginManager {
      */
     @Override
     public PluginResult disableAll() {
-        var results = Arrays.stream(Bukkit.getPluginManager().getPlugins())
-                .filter(bukkitPlugin -> !isIgnored(bukkitPlugin.getName()) && !isPaperPlugin(new BukkitPlugin(bukkitPlugin)))
+        var plugins = new ArrayList<>(Arrays.asList(Bukkit.getPluginManager().getPlugins()));
+        Collections.reverse(plugins);
+        var results = plugins.stream()
+                .filter(bukkitPlugin -> !isIgnored(bukkitPlugin.getName()))
                 .map(bukkitPlugin -> disable(new BukkitPlugin(bukkitPlugin)))
                 .toList();
         var allSuccessful = results.stream().allMatch(PluginResult::success);
@@ -533,7 +536,9 @@ public class BukkitPluginManager extends BasePluginManager {
 
     @Override
     public Set<Plugin> getPlugins() {
-        return Arrays.stream(Bukkit.getPluginManager().getPlugins()).map(BukkitPlugin::new).collect(Collectors.toSet());
+        return Arrays.stream(Bukkit.getPluginManager().getPlugins())
+                .map(BukkitPlugin::new)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     @ApiStatus.Internal

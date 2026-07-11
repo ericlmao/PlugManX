@@ -7,10 +7,12 @@ import core.com.rylinaux.plugman.util.ThreadUtil;
 import io.papermc.paper.plugin.bootstrap.BootstrapContext;
 import io.papermc.paper.plugin.bootstrap.PluginBootstrap;
 import io.papermc.paper.plugin.bootstrap.PluginProviderContext;
+import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import lombok.extern.slf4j.Slf4j;
 import org.bukkit.plugin.java.JavaPlugin;
 import paper.com.rylinaux.plugman.commands.OldPaperCommandCreator;
 import paper.com.rylinaux.plugman.commands.PaperCommandCreator;
+import paper.com.rylinaux.plugman.pluginmanager.PaperCommandRegistrationTracker;
 import paper.com.rylinaux.plugman.util.PaperThreadUtil;
 
 @Slf4j
@@ -18,12 +20,20 @@ public class PaperPlugManBootstrapper implements PluginBootstrap {
 
     @Override
     public void bootstrap(BootstrapContext bootstrapContext) {
-        // Not implementation required
+        bootstrapContext.getLifecycleManager().registerEventHandler(
+                LifecycleEvents.COMMANDS
+                        .newHandler(event -> PaperCommandRegistrationTracker.captureBaseline())
+                        .priority(Integer.MIN_VALUE));
     }
 
     @Override
     public JavaPlugin createPlugin(PluginProviderContext context) {
         var plugMan = new PlugManBukkit();
+
+        plugMan.getLifecycleManager().registerEventHandler(
+                LifecycleEvents.COMMANDS
+                        .newHandler(event -> PaperCommandRegistrationTracker.capturePluginEventBaseline())
+                        .priority(Integer.MIN_VALUE));
 
         try {
             plugMan.commandCreator = new PaperCommandCreator();
