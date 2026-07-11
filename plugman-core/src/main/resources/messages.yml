@@ -28,15 +28,16 @@ dump:
   error: '&4Could not dump to file.'
 enable:
   all: '&9All plugins have been enabled.'
+  all-failed: '&cSome plugins could not be enabled. Check the console for details.'
   already-enabled: '&c{0} is already enabled.'
   enabled: '&9{0} has been enabled.'
+  failed: '&c{0} could not be enabled. Check the console for details.'
 error:
   ignored: '&cPlugMan is configured to ignore that plugin.'
   invalid-plugin: '&cThat is not a valid plugin.'
   no-permission: '&cYou do not have permission to do this.'
   specify-plugin: '&cYou must specify a plugin.'
   specify-command: '&cYou must specify a command.'
-  paper-plugin: "&cPaper plugins are currently not supported, I'm sorry."
   usage:
     command: '&7- &9Command: &7{0}'
     description: '&7- &9Description: &7{0}'

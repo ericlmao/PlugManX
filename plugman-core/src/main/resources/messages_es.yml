@@ -28,15 +28,16 @@ dump:
   error: '&4No se ha podido volcar a archivo.'
 enable:
   all: '&9Todos los plugins han sido habilitados.'
+  all-failed: '&cNo se pudieron habilitar algunos plugins. Revisa la consola para obtener más información.'
   already-enabled: '&c{0} ya está habilitado.'
   enabled: '&9{0} ha sido habilitado.'
+  failed: '&cNo se pudo habilitar {0}. Revisa la consola para obtener más información.'
 error:
   ignored: '&cPlugMan está configurado para ignorar ese plugin.'
   invalid-plugin: '&cEse no es un plugin válido.'
   no-permission: '&cNo tienes permitido hacer eso.'
   specify-plugin: '&cDebes especificar un plugin.'
   specify-command: '&cDebes especificar un comando.'
-  paper-plugin: "&cActualmente, no se soportan plugins de Paper, Lo siento."
   usage:
     command: '&7- &9Comando: &7{0}'
     description: '&7- &9Descripción: &7{0}'

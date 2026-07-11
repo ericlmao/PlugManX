@@ -93,8 +93,7 @@ public class DisableCommand extends AbstractCommand {
             return;
         }
 
-        getPluginManager().disable(target);
-
-        sender.sendMessage("disable.disabled", target.getName());
+        var result = getPluginManager().disable(target);
+        sender.sendMessage(result.success() ? "disable.disabled" : result.messageId(), target.getName());
     }
 }

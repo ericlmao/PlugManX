@@ -27,12 +27,11 @@ package bukkit.com.rylinaux.plugman.commands;
  */
 
 import bukkit.com.rylinaux.plugman.PlugManBukkit;
+import core.com.rylinaux.plugman.file.PluginDescriptor;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
-import org.bukkit.plugin.InvalidDescriptionException;
-import org.bukkit.plugin.PluginDescriptionFile;
 import org.bukkit.util.StringUtil;
 
 import java.io.File;
@@ -41,7 +40,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.jar.JarFile;
 import java.util.stream.Collectors;
 
 /**
@@ -110,36 +108,25 @@ public class PlugManTabCompleter implements TabCompleter {
     private String extractLoadablePluginName(File pluginFile) {
         if (pluginFile.isDirectory()) return null;
 
-        if (!pluginFile.getName().toLowerCase().endsWith(".jar")) if (!new File("plugins", pluginFile.getName() + ".jar").exists()) return null;
+        if (!pluginFile.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".jar")) return null;
 
-        try (var jarFile = new JarFile(pluginFile)) {
-            if (jarFile.getEntry("plugin.yml") == null) return null;
-
-            try (var stream = jarFile.getInputStream(jarFile.getEntry("plugin.yml"))) {
-                if (stream == null) return null;
-
-                new PluginDescriptionFile(stream); // Validate the plugin.yml
-                return pluginFile.getName().substring(0, pluginFile.getName().length() - ".jar".length());
-            }
-        } catch (IOException | InvalidDescriptionException exception) {
+        try {
+            if (PluginDescriptor.fromJar(pluginFile).isEmpty()) return null;
+            return pluginFile.getName().substring(0, pluginFile.getName().length() - ".jar".length());
+        } catch (IOException exception) {
             return null;
         }
     }
 
     private boolean isPluginAlreadyLoaded(File pluginFile) {
-        try (var jarFile = new JarFile(pluginFile)) {
-            if (jarFile.getEntry("plugin.yml") == null) return false;
+        try {
+            var descriptor = PluginDescriptor.fromJar(pluginFile);
+            if (descriptor.isEmpty()) return false;
 
-            try (var stream = jarFile.getInputStream(jarFile.getEntry("plugin.yml"))) {
-                if (stream == null) return false;
-
-                var descriptionFile = new PluginDescriptionFile(stream);
-                for (var plugin : Bukkit.getPluginManager().getPlugins()) {
-                    if (!plugin.getName().equalsIgnoreCase(descriptionFile.getName())) continue;
-                    return true;
-                }
+            for (var plugin : Bukkit.getPluginManager().getPlugins()) {
+                if (plugin.getName().equalsIgnoreCase(descriptor.get().name())) return true;
             }
-        } catch (IOException | InvalidDescriptionException exception) {
+        } catch (IOException exception) {
             return false;
         }
         return false;

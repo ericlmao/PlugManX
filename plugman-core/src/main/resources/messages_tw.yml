@@ -28,15 +28,16 @@ dump:
   error: '&4無法傾印檔案。'
 enable:
   all: '&9已啟用所有插件。'
+  all-failed: '&c部分插件無法啟用。請查看主控台以取得詳細資訊。'
   already-enabled: '&c已經啟用 {0} 了。'
   enabled: '&9已啟用 {0}。'
+  failed: '&c無法啟用 {0}。請查看主控台以取得詳細資訊。'
 error:
   ignored: '&c已設定 PlugMan 忽略此插件。'
   invalid-plugin: '&c無效的插件。'
   no-permission: '&c你沒有使用此指令的權限。'
   specify-plugin: '&c請輸入指定的插件。'
   specify-command: '&c你必須指定指令。'
-  paper-plugin: "&c抱歉，目前不支援 Paper 插件。"
   usage:
     command: '&7- &9指令：&7{0}'
     description: '&7- &9描述：&7{0}'

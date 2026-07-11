@@ -28,15 +28,16 @@ dump:
   error: '&4Konnte nicht in Datei ablegen.'
 enable:
   all: '&9Alle Plugins wurden aktiviert.'
+  all-failed: '&cEinige Plugins konnten nicht aktiviert werden. Weitere Informationen findest du in der Konsole.'
   already-enabled: '&c{0} ist bereits aktiviert.'
   enabled: '&9{0} wurde aktiviert.'
+  failed: '&c{0} konnte nicht aktiviert werden. Weitere Informationen findest du in der Konsole.'
 error:
   ignored: '&cPlugMan ist darauf konfiguriert, dieses Plugin zu ignorieren.'
   invalid-plugin: '&cDies ist kein gültiges Plugin.'
   no-permission: '&cDu hast hierzu keine Berechtigung.'
   specify-plugin: '&cBitte gib ein Plugin an.'
   specify-command: '&cBitte gib einen Befehl an.'
-  paper-plugin: '&cPaper-Plugins werden derzeit leider nicht unterstützt.'
   usage:
     command: '&7- &9Befehl: &7{0}'
     description: '&7- &9Beschreibung: &7{0}'

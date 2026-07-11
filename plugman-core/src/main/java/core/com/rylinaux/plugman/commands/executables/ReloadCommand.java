@@ -32,6 +32,7 @@ import core.com.rylinaux.plugman.plugins.Plugin;
 import core.com.rylinaux.plugman.services.ServiceRegistry;
 
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Command that reloads plugin(s).
@@ -101,18 +102,49 @@ public class ReloadCommand extends AbstractCommand {
     }
 
     private void reloadAllPlugins(CommandSender sender, String label) {
-        var plugins = getPluginManager().getPlugins().stream().filter(plugin ->
-                plugin != null && !getPluginManager().isIgnored(plugin) && !getPluginManager().isPaperPlugin(plugin)).toList();
+        var plugins = new ArrayList<>(getPluginManager().getPlugins().stream().filter(plugin ->
+                plugin != null && !getPluginManager().isIgnored(plugin)).toList());
 
         var failedPlugins = new ArrayList<String>();
 
-        for (var plugin : plugins) {
-            var success = reloadPlugin(sender, label, plugin);
-
-            if (success) continue;
-            failedPlugins.add(plugin.getName());
+        if (!getPluginManager().supportsDependencyAwareBulkReload()) {
+            for (var plugin : plugins)
+                if (!reloadPlugin(sender, label, plugin)) failedPlugins.add(plugin.getName());
+            sendReloadAllResult(sender, failedPlugins);
+            return;
         }
 
+        var unloadedPlugins = new ArrayList<Plugin>();
+
+        // Bukkit and Paper expose plugins in dependency-first load order. Unload in reverse so
+        // dependents never stay active while their dependencies are being torn down.
+        for (var index = plugins.size() - 1; index >= 0; index--) {
+            var plugin = plugins.get(index);
+            var result = getPluginManager().unload(plugin);
+            if (!result.success()) {
+                sender.sendMessage(result.messageId(), plugin.getName());
+                failedPlugins.add(plugin.getName());
+                // Do not unload any of this plugin's dependencies while it remains active.
+                break;
+            }
+            unloadedPlugins.add(plugin);
+        }
+
+        for (var index = unloadedPlugins.size() - 1; index >= 0; index--) {
+            var plugin = unloadedPlugins.get(index);
+            var result = getPluginManager().load(plugin);
+            if (!result.success()) {
+                sender.sendMessage(result.messageId(), plugin.getName());
+                failedPlugins.add(plugin.getName());
+                continue;
+            }
+            sender.sendMessage("reload.reloaded", plugin.getName());
+        }
+
+        sendReloadAllResult(sender, failedPlugins);
+    }
+
+    private void sendReloadAllResult(CommandSender sender, List<String> failedPlugins) {
         if (failedPlugins.isEmpty()) {
             sender.sendMessage("reload.all");
             return;

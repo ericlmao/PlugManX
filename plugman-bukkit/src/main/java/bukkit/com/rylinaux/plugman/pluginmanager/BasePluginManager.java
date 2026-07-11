@@ -29,6 +29,7 @@ package bukkit.com.rylinaux.plugman.pluginmanager;
 import bukkit.com.rylinaux.plugman.PlugManBukkit;
 import bukkit.com.rylinaux.plugman.api.PlugManAPI;
 import core.com.rylinaux.plugman.config.PlugManConfigurationManager;
+import core.com.rylinaux.plugman.file.PluginDescriptor;
 import core.com.rylinaux.plugman.plugins.Command;
 import core.com.rylinaux.plugman.plugins.CommandMapWrap;
 import core.com.rylinaux.plugman.plugins.Plugin;
@@ -91,9 +92,10 @@ public abstract class BasePluginManager implements PluginManager {
         if (!(classLoader instanceof URLClassLoader)) return;
 
         try {
-            FieldAccessor.setValue("plugin", classLoader, null);
-
-            FieldAccessor.setValue("pluginInit", classLoader, null);
+            if (FieldAccessor.getField(classLoader.getClass(), "plugin") != null)
+                FieldAccessor.setValue("plugin", classLoader, null);
+            if (FieldAccessor.getField(classLoader.getClass(), "pluginInit") != null)
+                FieldAccessor.setValue("pluginInit", classLoader, null);
         } catch (SecurityException | IllegalArgumentException | IllegalAccessException exception) {
             Logger.getLogger(getClass().getName()).log(Level.SEVERE, "Error removing class load from plugin", exception);
         }
@@ -117,9 +119,9 @@ public abstract class BasePluginManager implements PluginManager {
 
         // Search for plugin by name in all jar files
         for (var f : pluginDir.listFiles())
-            if (f.getName().endsWith(".jar")) try {
-                var desc = PlugManBukkit.getInstance().getPluginLoader().getPluginDescription(f);
-                if (desc.getName().equalsIgnoreCase(name)) return f;
+            if (f.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".jar")) try {
+                var descriptor = PluginDescriptor.fromJar(f);
+                if (descriptor.isPresent() && descriptor.get().name().equalsIgnoreCase(name)) return f;
             } catch (Exception exception) {
                 PlugManBukkit.getInstance().getLogger().warning("Failed to read descriptor for " + f.getName() + " - skipping");
             }

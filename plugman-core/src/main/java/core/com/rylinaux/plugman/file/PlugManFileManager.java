@@ -35,7 +35,6 @@ import lombok.RequiredArgsConstructor;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
-import java.util.jar.JarFile;
 import java.util.zip.ZipException;
 
 /**
@@ -116,13 +115,8 @@ public class PlugManFileManager {
     }
 
     private PluginDescriptor getPluginDescription(File file) {
-        try (var jarFile = new JarFile(file)) {
-            if (jarFile.getEntry("plugin.yml") == null) return null;
-
-            try (var stream = jarFile.getInputStream(jarFile.getEntry("plugin.yml"))) {
-                if (stream == null) return null;
-                return PluginDescriptor.fromInputStream(stream);
-            }
+        try {
+            return PluginDescriptor.fromJar(file).orElse(null);
         } catch (IOException exception) {
             if (exception instanceof ZipException) logger.info("Possible broken plugin detected: " + file.getName());
             else logger.severe("Error reading plugin description: " + exception.getMessage());

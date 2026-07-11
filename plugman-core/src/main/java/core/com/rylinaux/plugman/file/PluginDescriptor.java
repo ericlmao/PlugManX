@@ -26,40 +26,68 @@ package core.com.rylinaux.plugman.file;
  * #L%
  */
 
-import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.jar.JarFile;
+
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 /**
- * Simple plugin descriptor that reads basic information from plugin.yml
+ * Simple plugin descriptor that reads basic information from Bukkit and Paper plugin descriptors.
  *
  * @author rylinaux
  */
 public record PluginDescriptor(String name) {
 
-    /**
-     * Create a plugin descriptor from an input stream containing plugin.yml content
-     */
-    public static PluginDescriptor fromInputStream(InputStream stream) throws IOException {
-        try (var reader = new BufferedReader(new InputStreamReader(stream))) {
-            String line;
-            String name = null;
+    private static final List<String> DESCRIPTOR_FILES = List.of("paper-plugin.yml", "plugin.yml");
 
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                if (line.startsWith("name:")) {
-                    name = line.substring(5).trim();
-                    // Remove quotes if present
-                    if (name.startsWith("\"") && name.endsWith("\"")) name = name.substring(1, name.length() - 1);
-                    else if (name.startsWith("'") && name.endsWith("'")) name = name.substring(1, name.length() - 1);
-                    break;
+    /**
+     * Read the first supported descriptor from a plugin jar.
+     * Paper's descriptor takes precedence when a jar contains both descriptor types.
+     *
+     * @param file plugin jar
+     * @return the descriptor, or an empty optional when the jar has no supported descriptor
+     * @throws IOException if the jar or descriptor cannot be read
+     */
+    public static Optional<PluginDescriptor> fromJar(File file) throws IOException {
+        try (var jarFile = new JarFile(file)) {
+            for (var descriptorFile : DESCRIPTOR_FILES) {
+                var entry = jarFile.getJarEntry(descriptorFile);
+                if (entry == null) continue;
+
+                try (var stream = jarFile.getInputStream(entry)) {
+                    return Optional.of(fromInputStream(stream));
                 }
             }
+        }
 
-            if (name == null) throw new IOException("No name field found in plugin.yml");
+        return Optional.empty();
+    }
 
+    /**
+     * Create a plugin descriptor from an input stream containing plugin descriptor content.
+     */
+    public static PluginDescriptor fromInputStream(InputStream stream) throws IOException {
+        try (stream) {
+            var yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
+            var document = yaml.load(stream);
+            if (!(document instanceof Map<?, ?> descriptor))
+                throw new IOException("Plugin descriptor is not a YAML mapping");
+
+            var nameValue = descriptor.get("name");
+            if (nameValue == null) throw new IOException("No name field found in plugin descriptor");
+
+            var name = nameValue.toString().trim();
+            if (name.isEmpty()) throw new IOException("No name field found in plugin descriptor");
             return new PluginDescriptor(name);
+        } catch (RuntimeException exception) {
+            throw new IOException("Invalid plugin descriptor", exception);
         }
     }
 }

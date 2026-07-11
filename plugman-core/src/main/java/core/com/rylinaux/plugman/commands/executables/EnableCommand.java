@@ -29,6 +29,9 @@ package core.com.rylinaux.plugman.commands.executables;
 import core.com.rylinaux.plugman.commands.AbstractCommand;
 import core.com.rylinaux.plugman.commands.CommandSender;
 import core.com.rylinaux.plugman.services.ServiceRegistry;
+import core.com.rylinaux.plugman.util.StringUtil;
+
+import java.util.stream.IntStream;
 
 /**
  * Command that enables plugin(s).
@@ -83,9 +86,26 @@ public class EnableCommand extends AbstractCommand {
     public void execute(CommandSender sender, String label, String[] args) {
         if (!validateArguments(label, args, 2)) return;
 
-        if (handleAllArgument(args, "all", () -> getPluginManager().enableAll(), "enable.all")) return;
+        if (args[1].equalsIgnoreCase("all") || args[1].equalsIgnoreCase("*")) {
+            if (!hasPermission("all")) {
+                sendNoPermissionMessage();
+                return;
+            }
 
+            var result = getPluginManager().enableAll();
+            sender.sendMessage(result.success() ? "enable.all" : "enable.all-failed");
+            return;
+        }
+
+        IntStream.range(1, args.length).forEach(i -> args[i] = args[i].replaceAll("[/\\\\]", ""));
         var target = getPluginManager().getPluginByName(args, 1);
+        var name = StringUtil.consolidateStrings(args, 1).trim();
+
+        if (target == null) {
+            var result = getPluginManager().enable(name);
+            sender.sendMessage(result.messageId(), name);
+            return;
+        }
 
         if (!validatePlugin(label, target)) return;
 

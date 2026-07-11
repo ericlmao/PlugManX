@@ -35,26 +35,27 @@ import core.com.rylinaux.plugman.util.reflection.FieldAccessor;
 import core.com.rylinaux.plugman.util.reflection.MethodAccessor;
 import io.papermc.paper.plugin.entrypoint.Entrypoint;
 import io.papermc.paper.plugin.entrypoint.LaunchEntryPointHandler;
+import io.papermc.paper.plugin.entrypoint.dependency.MetaDependencyTree;
+import io.papermc.paper.plugin.manager.PaperPluginManagerImpl;
 import io.papermc.paper.plugin.provider.PluginProvider;
 import io.papermc.paper.plugin.storage.SimpleProviderStorage;
 import lombok.SneakyThrows;
 import lombok.experimental.Delegate;
 import org.bukkit.plugin.EventExecutor;
-import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 
 public class ModernPaperPluginManager extends PaperPluginManager {
-    //TODO: Add paper-plugin support
-
     @Override
     public synchronized PluginResult unload(Plugin plugin) {
+        rememberPluginLoadPosition(plugin);
         var result = unloadWithPaper(plugin);
         if (!result.second().success()) return result.second();
 
@@ -104,7 +105,8 @@ public class ModernPaperPluginManager extends PaperPluginManager {
         var instanceManager = getInstanceManager();
 
         // The plugin can only be removed from the lookup names and the plugin list AFTER the commands are unregistered, to avoid issues with commands created via Paper's Brigadier API
-        data.lookupNames.remove(plugin.getName().replace(" ", "_").toLowerCase());
+        var pluginHandle = plugin.<org.bukkit.plugin.Plugin>getHandle();
+        data.lookupNames.entrySet().removeIf(entry -> entry.getValue() == pluginHandle);
         data.pluginList.removeIf(otherPlugin -> otherPlugin.getName().equalsIgnoreCase(plugin.getName()));
 
         try {
@@ -114,14 +116,49 @@ public class ModernPaperPluginManager extends PaperPluginManager {
         }
 
         removeFromPluginLists(plugin, data.commonData);
-        removeFromProviderStorage(plugin);
+        removeFromProviderStorages(plugin);
+        removeFromDependencyGraph(plugin);
     }
 
-    private void removeFromProviderStorage(Plugin plugin) {
+    private void removeFromDependencyGraph(Plugin plugin) {
         try {
-            var storage = getPluginStorage();
+            var paperPluginManager = PaperPluginManagerImpl.getInstance();
+            var instanceManager = FieldAccessor.getValue(
+                    paperPluginManager.getClass(), "instanceManager", paperPluginManager);
+            if (instanceManager == null) return;
+
+            var dependencyTree = FieldAccessor.<MetaDependencyTree>getValue(
+                    instanceManager.getClass(), "dependencyTree", instanceManager);
+            if (dependencyTree != null) {
+                var pluginMeta = plugin.<org.bukkit.plugin.Plugin>getHandle().getPluginMeta();
+                var dependencyGraph = dependencyTree.getGraph();
+                var dependents = dependencyGraph.nodes().contains(pluginMeta.getName())
+                        ? Set.copyOf(dependencyGraph.predecessors(pluginMeta.getName()))
+                        : Set.<String>of();
+
+                dependencyTree.remove(pluginMeta);
+
+                // Removing a node also removes every incoming edge. Keep the declarations made by
+                // still-loaded dependents so Paper can reconnect their class loaders when this
+                // plugin is loaded again.
+                dependents.forEach(dependent -> dependencyGraph.putEdge(dependent, pluginMeta.getName()));
+            }
+        } catch (Exception exception) {
+            PlugManBukkit.getInstance().getLogger().log(Level.SEVERE,
+                    "Failed to remove dependency metadata for plugin: " + plugin.getName(), exception);
+        }
+    }
+
+    private void removeFromProviderStorages(Plugin plugin) {
+        removeFromProviderStorage(plugin, Entrypoint.BOOTSTRAPPER);
+        removeFromProviderStorage(plugin, Entrypoint.PLUGIN);
+    }
+
+    private void removeFromProviderStorage(Plugin plugin, Entrypoint<?> entrypoint) {
+        try {
+            var storage = getPluginStorage(entrypoint);
             if (storage == null) {
-                PlugManBukkit.getInstance().getLogger().warning("Could not get plugin storage for provider removal");
+                PlugManBukkit.getInstance().getLogger().warning("Could not get " + entrypoint + " storage for provider removal");
                 return;
             }
 
@@ -133,18 +170,19 @@ public class ModernPaperPluginManager extends PaperPluginManager {
         }
     }
 
-    private Object getPluginStorage() {
-        return LaunchEntryPointHandler.INSTANCE.get(Entrypoint.PLUGIN);
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private Object getPluginStorage(Entrypoint<?> entrypoint) {
+        return LaunchEntryPointHandler.INSTANCE.get((Entrypoint) entrypoint);
     }
 
-    private List<PluginProvider<JavaPlugin>> cloneProvidersList(Object storage) {
+    private List<PluginProvider<?>> cloneProvidersList(Object storage) {
         var providersIterable = ((SimpleProviderStorage) storage).getRegisteredProviders();
-        var clonedList = new ArrayList<PluginProvider<JavaPlugin>>();
-        for (var provider : providersIterable) clonedList.add((PluginProvider<JavaPlugin>) provider);
+        var clonedList = new ArrayList<PluginProvider<?>>();
+        for (var provider : providersIterable) clonedList.add((PluginProvider<?>) provider);
         return clonedList;
     }
 
-    private void removeMatchingProviders(Plugin plugin, Object storage, List<PluginProvider<JavaPlugin>> providers) {
+    private void removeMatchingProviders(Plugin plugin, Object storage, List<PluginProvider<?>> providers) {
         for (var provider : providers) {
             if (!provider.getMeta().getName().equalsIgnoreCase(plugin.getName())) continue;
 
@@ -158,7 +196,7 @@ public class ModernPaperPluginManager extends PaperPluginManager {
         }
     }
 
-    private void removeProviderFromStorage(Plugin plugin, Object storage, PluginProvider<JavaPlugin> provider) {
+    private void removeProviderFromStorage(Plugin plugin, Object storage, PluginProvider<?> provider) {
         try {
             var providers = FieldAccessor.<List<?>>getValue(SimpleProviderStorage.class, "providers", storage);
             var removed = providers.remove(provider);

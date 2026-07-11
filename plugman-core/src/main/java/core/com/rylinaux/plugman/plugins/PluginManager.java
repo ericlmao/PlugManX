@@ -41,6 +41,19 @@ public interface PluginManager {
     PluginResult enable(Plugin plugin);
 
     /**
+     * Enable a plugin by name when the platform retains disabled plugins outside its live plugin
+     * collection. Platforms without that lifecycle return an invalid-plugin result.
+     *
+     * @param name plugin name
+     * @return status message
+     */
+    default PluginResult enable(String name) {
+        var plugin = getPluginByName(name);
+        if (plugin == null) return new PluginResult(false, "error.invalid-plugin");
+        return enable(plugin);
+    }
+
+    /**
      * Enable all plugins.
      */
     PluginResult enableAll();
@@ -188,6 +201,14 @@ public interface PluginManager {
      * @return if the plugin is a Paper plugin
      */
     boolean isPaperPlugin(Plugin plugin);
+
+    /**
+     * Whether this manager preserves dependency-first plugin order across unload/load cycles and
+     * can therefore perform a two-phase bulk reload safely.
+     */
+    default boolean supportsDependencyAwareBulkReload() {
+        return false;
+    }
 
     Set<Plugin> getPlugins();
 }
